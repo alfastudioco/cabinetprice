@@ -62,6 +62,9 @@ export default function App() {
   const [hardware, setHardware] = useState("Blum Soft Close");
   const [price, setPrice] = useState("");
   const [width, setWidth] = useState("");
+  const [cabinetType, setCabinetType] = useState("both");
+  const [manualUpper, setManualUpper] = useState("");
+  const [manualLower, setManualLower] = useState("");
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState(null);
   const [photoRes, setPhotoRes] = useState(null);
@@ -116,7 +119,22 @@ export default function App() {
       ? "Grand total MUST equal exactly $" + parseInt(price).toLocaleString() + ". Work backwards from this to set costs."
       : "Estimate fair market price based on specs: Grade:" + grade + ", Box:" + box + ", Door:" + door + ", Finish:" + finish + ", Hardware:" + hardware + ".";
 
-    return "You are a cabinet estimator. Read every dimension label printed on the elevation drawings exactly as shown. Do not estimate — only use numbers explicitly written on the drawings.\n\nFor each wall:\n1. List every dimension you can read\n2. Sum them, convert inches to feet (divide by 12)\n3. upperLF = totalLF x 0.5, lowerLF = totalLF x 0.5\n4. Lowers = 60% of cost, uppers = 40%\n5. " + priceStr + "\n\nSpecs: Grade:" + grade + ", Box:" + box + ", Door:" + door + ", Finish:" + finish + ", Hardware:" + hardware + "\n\nRespond ONLY with valid JSON, no markdown:\n{\"walls\":[{\"name\":\"str\",\"totalLF\":0.0,\"upperLF\":0.0,\"lowerLF\":0.0,\"upperCost\":0,\"lowerCost\":0,\"totalCost\":0,\"costPerLF\":0,\"dimensionsRead\":[\"str\"],\"features\":[\"str\"]}],\"totalLF\":0.0,\"totalUpperLF\":0.0,\"totalLowerLF\":0.0,\"totalUpperCost\":0,\"totalLowerCost\":0,\"grandTotal\":0,\"upperCostPerLF\":0,\"lowerCostPerLF\":0,\"blendedCostPerLF\":0,\"specs\":[\"str\"],\"notes\":\"str\"}";
+    let typeStr = "";
+    if (manualUpper && manualLower) {
+      typeStr = "Use EXACTLY these linear footages — do not read from drawing: upperLF=" + manualUpper + ", lowerLF=" + manualLower + ". totalLF=" + (parseFloat(manualUpper) + parseFloat(manualLower)) + ". Lowers 60% of cost, uppers 40%.";
+    } else if (manualUpper && !manualLower) {
+      typeStr = "Upper LF is exactly " + manualUpper + " — do not change this. No lowers (lowerLF=0, lowerCost=0). All cost goes to uppers.";
+    } else if (!manualUpper && manualLower) {
+      typeStr = "Lower LF is exactly " + manualLower + " — do not change this. No uppers (upperLF=0, upperCost=0). All cost goes to lowers.";
+    } else if (cabinetType === "lowers") {
+      typeStr = "LOWER CABINETS ONLY — no uppers. Set upperLF=0, upperCost=0. All cost to lowers (100%).";
+    } else if (cabinetType === "uppers") {
+      typeStr = "UPPER CABINETS ONLY — no lowers. Set lowerLF=0, lowerCost=0. All cost to uppers (100%).";
+    } else {
+      typeStr = "Split lowers 60% of cost, uppers 40%. Read upper and lower LF independently from drawings.";
+    }
+
+    return "You are a cabinet estimator. Read every dimension label printed on the elevation drawings exactly as shown. Do not estimate — only use numbers explicitly written on the drawings.\n\nFor each wall:\n1. List every dimension you can read\n2. Sum them, convert inches to feet (divide by 12)\n3. " + typeStr + "\n4. " + priceStr + "\n\nSpecs: Grade:" + grade + ", Box:" + box + ", Door:" + door + ", Finish:" + finish + ", Hardware:" + hardware + "\n\nRespond ONLY with valid JSON, no markdown:\n{\"walls\":[{\"name\":\"str\",\"totalLF\":0.0,\"upperLF\":0.0,\"lowerLF\":0.0,\"upperCost\":0,\"lowerCost\":0,\"totalCost\":0,\"costPerLF\":0,\"dimensionsRead\":[\"str\"],\"features\":[\"str\"]}],\"totalLF\":0.0,\"totalUpperLF\":0.0,\"totalLowerLF\":0.0,\"totalUpperCost\":0,\"totalLowerCost\":0,\"grandTotal\":0,\"upperCostPerLF\":0,\"lowerCostPerLF\":0,\"blendedCostPerLF\":0,\"specs\":[\"str\"],\"notes\":\"str\"}";
   };
 
   const buildPhotoPrompt = () => {
@@ -222,6 +240,31 @@ export default function App() {
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 20 }}>
+              <div style={{ gridColumn: "1 / -1" }}>
+                <div style={lbl}>What cabinets are in this project?</div>
+                <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                  {[["both", "Uppers + Lowers"], ["lowers", "Lowers Only"], ["uppers", "Uppers Only"]].map(([v, l]) => (
+                    <button key={v} onClick={() => { setCabinetType(v); setManualUpper(""); setManualLower(""); }}
+                      style={{ flex: 1, padding: "10px 6px", background: cabinetType === v ? C.dark : C.warm, color: cabinetType === v ? C.cream : C.dark, border: "1px solid " + C.border, cursor: "pointer", fontFamily: "monospace", fontSize: 10, letterSpacing: 1, textTransform: "uppercase" }}>
+                      {l}
+                    </button>
+                  ))}
+                </div>
+                {cabinetType !== "lowers" && (
+                  <div style={{ marginBottom: 8 }}>
+                    <div style={{ ...lbl, marginBottom: 4 }}>Override Upper LF (optional)</div>
+                    <input type="number" placeholder="e.g. 19.3" value={manualUpper} onChange={e => setManualUpper(e.target.value)}
+                      style={{ width: "100%", background: C.warm, border: "1px solid " + C.border, padding: "10px 14px", fontFamily: "monospace", fontSize: 13, color: C.dark, outline: "none" }} />
+                  </div>
+                )}
+                {cabinetType !== "uppers" && (
+                  <div>
+                    <div style={{ ...lbl, marginBottom: 4 }}>Override Lower LF (optional)</div>
+                    <input type="number" placeholder="e.g. 39.3" value={manualLower} onChange={e => setManualLower(e.target.value)}
+                      style={{ width: "100%", background: C.warm, border: "1px solid " + C.border, padding: "10px 14px", fontFamily: "monospace", fontSize: 13, color: C.dark, outline: "none" }} />
+                  </div>
+                )}
+              </div>
               <Sel label="Cabinet Grade" val={grade} set={setGrade} opts={GRADES} />
               <Sel label="Box Material" val={box} set={setBox} opts={BOX_TYPES} />
               <Sel label="Door Style" val={door} set={setDoor} opts={DOOR_STYLES} />
