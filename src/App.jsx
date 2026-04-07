@@ -75,16 +75,38 @@ export default function App() {
     setResults(null); setPhotoRes(null); setError("");
   };
 
-  const handleFiles = useCallback((newFiles) => {
-    Array.from(newFiles).forEach(file => {
-      if (!file.type.startsWith("image/")) return;
+  const compressImage = (file) => {
+    return new Promise((resolve) => {
       const reader = new FileReader();
       reader.onload = e => {
-        const src = e.target.result;
-        setPreviews(p => [...p, { src }]);
-        setFiles(f => [...f, { b64: src.split(",")[1], type: file.type }]);
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement("canvas");
+          const MAX = 1200;
+          let w = img.width, h = img.height;
+          if (w > MAX || h > MAX) {
+            if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
+            else { w = Math.round(w * MAX / h); h = MAX; }
+          }
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, w, h);
+          const compressed = canvas.toDataURL("image/jpeg", 0.7);
+          resolve({ src: compressed, b64: compressed.split(",")[1], type: "image/jpeg" });
+        };
+        img.src = e.target.result;
       };
       reader.readAsDataURL(file);
+    });
+  };
+
+  const handleFiles = useCallback((newFiles) => {
+    Array.from(newFiles).forEach(async file => {
+      if (!file.type.startsWith("image/")) return;
+      const compressed = await compressImage(file);
+      setPreviews(p => [...p, { src: compressed.src }]);
+      setFiles(f => [...f, { b64: compressed.b64, type: compressed.type }]);
     });
   }, []);
 
@@ -111,7 +133,10 @@ export default function App() {
     try { data = JSON.parse(raw); } catch (e) { throw new Error("Server error: " + raw.slice(0, 300)); }
     if (!res.ok || data.error) { throw new Error(data.error || JSON.stringify(data)); }
     const text = data.content.map(i => i.text || "").join("");
-    return JSON.parse(text.replace(/```json|```/g, "").trim());
+    const cleaned = text.replace(/```json|```/g, "").trim();
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error("AI could not analyze this image. Try a clearer photo with visible dimensions.");
+    return JSON.parse(jsonMatch[0]);
   };
 
   const buildLayoutPrompt = () => {
@@ -134,7 +159,7 @@ export default function App() {
       typeStr = "Split lowers 60% of cost, uppers 40%. Read upper and lower LF independently from drawings.";
     }
 
-    return "You are a cabinet estimator. Read every dimension label printed on the elevation drawings exactly as shown. Do not estimate — only use numbers explicitly written on the drawings.\n\nFor each wall:\n1. List every dimension you can read\n2. Sum them, convert inches to feet (divide by 12)\n3. " + typeStr + "\n4. " + priceStr + "\n\nSpecs: Grade:" + grade + ", Box:" + box + ", Door:" + door + ", Finish:" + finish + ", Hardware:" + hardware + "\n\nRespond ONLY with valid JSON, no markdown:\n{\"walls\":[{\"name\":\"str\",\"totalLF\":0.0,\"upperLF\":0.0,\"lowerLF\":0.0,\"upperCost\":0,\"lowerCost\":0,\"totalCost\":0,\"costPerLF\":0,\"dimensionsRead\":[\"str\"],\"features\":[\"str\"]}],\"totalLF\":0.0,\"totalUpperLF\":0.0,\"totalLowerLF\":0.0,\"totalUpperCost\":0,\"totalLowerCost\":0,\"grandTotal\":0,\"upperCostPerLF\":0,\"lowerCostPerLF\":0,\"blendedCostPerLF\":0,\"specs\":[\"str\"],\"notes\":\"str\"}";
+    return "You are a cabinet estimator. Read every dimension label printed on the elevation drawings exactly as shown. Do not estimate — only use numbers explicitly written on the drawings.\n\nFor each wall:\n1. List every dimension you can read\n2. Sum them, convert inches to feet (divide by 12)\n3. " + typeStr + "\n4. " + priceStr + "\n\nSpecs: Grade:" + grade + ", Box:" + box + ", Door:" + door + ", Finish:" + finish + ", Hardware:" + hardware + "\n\nYour entire response must be this JSON and nothing else — no text before or after:\n{\"walls\":[{\"name\":\"str\",\"totalLF\":0.0,\"upperLF\":0.0,\"lowerLF\":0.0,\"upperCost\":0,\"lowerCost\":0,\"totalCost\":0,\"costPerLF\":0,\"dimensionsRead\":[\"str\"],\"features\":[\"str\"]}],\"totalLF\":0.0,\"totalUpperLF\":0.0,\"totalLowerLF\":0.0,\"totalUpperCost\":0,\"totalLowerCost\":0,\"grandTotal\":0,\"upperCostPerLF\":0,\"lowerCostPerLF\":0,\"blendedCostPerLF\":0,\"specs\":[\"str\"],\"notes\":\"str\"}";
   };
 
   const buildPhotoPrompt = () => {
@@ -143,7 +168,7 @@ export default function App() {
       ? "Target sale price: $" + parseInt(price).toLocaleString() + "."
       : "Estimate fair market pricing.";
 
-    return "You are an expert cabinet estimator. Analyze these cabinet photos. " + widthStr + priceStr + " Customer wants: Grade:" + grade + ", Box:" + box + ", Door:" + door + ", Finish:" + finish + ", Hardware:" + hardware + ". Identify style, finish, door type. Estimate LF for uppers and lowers. Note special features and condition. Lowers 60% of cost, uppers 40%.\n\nRespond ONLY with valid JSON, no markdown:\n{\"detectedStyle\":\"str\",\"detectedFinish\":\"str\",\"detectedDoorStyle\":\"str\",\"specialFeatures\":[\"str\"],\"condition\":\"str\",\"estimatedUpperLF\":0.0,\"estimatedLowerLF\":0.0,\"estimatedTotalLF\":0.0,\"upperCost\":0,\"lowerCost\":0,\"grandTotal\":0,\"upperCostPerLF\":0,\"lowerCostPerLF\":0,\"blendedCostPerLF\":0,\"confidence\":\"Low/Medium/High\",\"confidenceReason\":\"str\",\"recommendations\":[\"str\"],\"notes\":\"str\"}";
+    return "You are a cabinet estimator. You MUST respond with ONLY a JSON object — no explanations, no refusals, no text before or after. Even if the image is unclear, make your best estimate and return JSON.\n\n" + widthStr + priceStr + " Customer wants: Grade:" + grade + ", Box:" + box + ", Door:" + door + ", Finish:" + finish + ", Hardware:" + hardware + ".\n\nEstimate LF for uppers and lowers from the photo. If unsure, use reasonable estimates based on typical kitchen sizes. Lowers 60% of cost, uppers 40%.\n\nYour entire response must be this JSON and nothing else:\n{\"detectedStyle\":\"str\",\"detectedFinish\":\"str\",\"detectedDoorStyle\":\"str\",\"specialFeatures\":[\"str\"],\"condition\":\"str\",\"estimatedUpperLF\":0.0,\"estimatedLowerLF\":0.0,\"estimatedTotalLF\":0.0,\"upperCost\":0,\"lowerCost\":0,\"grandTotal\":0,\"upperCostPerLF\":0,\"lowerCostPerLF\":0,\"blendedCostPerLF\":0,\"confidence\":\"Low/Medium/High\",\"confidenceReason\":\"str\",\"recommendations\":[\"str\"],\"notes\":\"str\"}";
   };
 
   const analyzeLayout = async () => {
